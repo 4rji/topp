@@ -1,10 +1,30 @@
-# topp
+<h1 align="center">
+  <img src="assets/packet-flow.svg" alt="topp: data packets flowing through network cables plugged into local ports" width="100%">
+</h1>
 
-A native macOS network monitor that shows which processes own your local ports and how much data each port sends and receives.
+<p align="center">
+  <strong>A native macOS network monitor that shows which processes own your local ports and how much data each port sends and receives.</strong>
+</p>
+
+<p align="center">
+  <a href="#quick-install">Install</a> ·
+  <a href="#monitor-local-ports">Window</a> ·
+  <a href="#watch-the-busiest-port">Menu bar</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#build-from-source">Build</a>
+</p>
+
+## Highlights
+
+- **Per-port, per-process traffic.** Live inbound and outbound rates for every local TCP and UDP port, with the process that owns it.
+- **Menu bar mode.** The busiest port and its combined rate sit beside the clock.
+- **Process details.** Executable path, user, parent PID, start time, and application info are one click away.
+- **Single file, no dependencies.** One universal executable for Apple Silicon and Intel.
+- **Least privilege.** Only the traffic collector, built on Apple's `nettop`, runs with `sudo`. The interface runs as your user.
 
 ## Quick install
 
-The repository includes a ready-to-run executable for Apple Silicon (macOS 12 or later) and Intel (macOS 14 or later).
+The repository includes a ready-to-run universal executable for Apple Silicon (macOS 12 or later) and Intel (macOS 14 or later).
 
 ```sh
 git clone https://github.com/4rji/topp.git
@@ -12,13 +32,7 @@ cd topp
 ./topp
 ```
 
-Launch it as your regular user. When prompted in Terminal, enter your administrator password. Only the traffic collector runs with `sudo`. Closing the window quits the monitor.
-
-To keep it running beside the clock and get your Terminal prompt back, use:
-
-```sh
-./topp -d
-```
+Launch it as your regular user. When prompted in Terminal, enter your administrator password. Closing the window quits the monitor.
 
 To install the command on your PATH, run these commands from the cloned directory:
 
@@ -27,7 +41,13 @@ sudo install -d /usr/local/bin
 sudo install -m 755 ./topp /usr/local/bin/topp
 ```
 
-You can then run `topp`, `topp -d`, or `topp --help` from any directory.
+## Usage
+
+| Command | What it does |
+| --- | --- |
+| `topp` | Open the window. Closing it quits topp. |
+| `topp -d` | Show the busiest port in the menu bar and return your Terminal prompt. |
+| `topp --help` | Show help. |
 
 ## Monitor local ports
 
@@ -35,17 +55,22 @@ You can then run `topp`, `topp -d`, or `topp --help` from any directory.
 
 Each row identifies a local port, protocol, and process ID. The **Inbound** and **Outbound** columns show rates calculated from successive samples of the macOS `nettop` byte counters.
 
-- Click **Port**, **Process**, or **State** to sort. Click again to reverse the order. As traffic changes, rows keep their order and changed values are highlighted. New rows appear at the bottom.
-- Click **ⓘ** beside a process to see its executable path, user, parent PID, start time, and application details when available.
-- Filter by port, process name, or PID. Select rows and click **Hide Selected Ports** to hide those port and protocol combinations across processes. The **Hidden** menu restores them. Hidden ports stay hidden across launches.
+- **Sort.** Click **Port**, **Process**, or **State**. Click again to reverse the order. As traffic changes, rows keep their order and changed values are highlighted. New rows appear at the bottom.
+- **Inspect.** Click **ⓘ** beside a process to see its executable path, user, parent PID, start time, and application details when available.
+- **Filter.** Type a port, process name, or PID.
+- **Hide.** Select rows and click **Hide Selected Ports** to hide those port and protocol combinations across processes. The **Hidden** menu restores them. Hidden ports stay hidden across launches.
 
 ## Watch the busiest port
 
 ![topp menu bar indicator beside the macOS clock](clock.png)
 
-In menu bar mode, topp shows the busiest visible port and its combined inbound and outbound rate. It adds traffic across processes sharing the same local port and protocol. A dash means there is no measured traffic to display.
+Run `topp -d` to keep topp beside the clock. It shows the busiest visible port and its combined inbound and outbound rate, adding traffic across processes that share the same local port and protocol. A dash means there is no measured traffic to display.
 
 Hover to see inbound and outbound rates separately. Click to open the full window, or right-click for a per-process traffic summary and **Quit topp**. Closing the window in this mode leaves the indicator running.
+
+## How it works
+
+topp asks `sudo` to start a small loop that runs `/usr/bin/nettop` once per second and streams its byte counters back to the unprivileged app. Rates are the difference between successive samples. Only fixed system commands run as root, and the collector stops when topp quits, because its output pipe closes.
 
 ## Build from source
 
@@ -57,4 +82,21 @@ swiftc -O static/topp.swift -o build/topp
 ./build/topp --help
 ```
 
-For deployment, copy the universal `topp` executable from the repository root to another supported Mac. The source and screenshots are only needed for development and documentation.
+For deployment, copy the universal `topp` executable from the repository root to another supported Mac. The source, screenshots, and banner are only needed for development and documentation.
+
+### Regenerate the banner
+
+The animated banner is plain SVG with CSS animations, generated by [`tools/packet-flow.swift`](tools/packet-flow.swift). Each cable is a port: packets travel out from the Mac and back in, busier ports carry more packets, and idle ports stay dark. The animation pauses for viewers who prefer reduced motion.
+
+```sh
+swift tools/packet-flow.swift --output assets/packet-flow.svg
+```
+
+Drive it with real rates by passing one connection per line as `<label> <rx bytes/s> <tx bytes/s>`:
+
+```sh
+printf 'TCP 443 1.8M 210K\nTCP 22 40K 120K\nUDP 5353 0 0\n' |
+  swift tools/packet-flow.swift --traffic - --output assets/packet-flow.svg
+```
+
+Other options set color, speed, direction, packet size, density, and glow. Run `swift tools/packet-flow.swift --help` for the full list.
