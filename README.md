@@ -55,7 +55,8 @@ sudo install -m 755 ./topp /usr/local/bin/topp
 
 Each row identifies a local port, protocol, and process ID. The **Inbound** and **Outbound** columns show rates calculated from successive samples of the macOS `nettop` byte counters.
 
-- **Sort.** Click **Port**, **Process**, or **State**. Click again to reverse the order. As traffic changes, rows keep their order and changed values are highlighted. New rows appear at the bottom.
+- **Sort.** Click **Port**, **Process**, or **State**. Click again to reverse the order. Sorted by **Port**, the list stays in port order and new rows appear in place. Sorted by **Process** or **State**, rows keep their order as traffic changes and new rows appear at the bottom. Changed values are highlighted.
+- **Zoom.** Press **⌘+** or **⌘−** to change the text size, or **⌘0** to restore it. The window widens when needed to keep every column visible, and topp remembers the size.
 - **Inspect.** Click **ⓘ** beside a process to see its executable path, user, parent PID, start time, and application details when available.
 - **Filter.** Type a port, process name, or PID.
 - **Hide.** Select rows and click **Hide Selected Ports** to hide those port and protocol combinations across processes. The **Hidden** menu restores them. Hidden ports stay hidden across launches.

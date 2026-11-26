@@ -227,10 +227,27 @@ final class Monitor: ObservableObject {
     @Published var query = ""
     @Published var status = "Reading ports…"
     @Published var hidden: Set<String>
+    @Published var fontSize: Double {
+        didSet { defaults.set(fontSize, forKey: "fontSize") }
+    }
+    static let defaultFontSize = Double(NSFont.systemFontSize)
+    static let fontSizes = 10.0...30.0
     var onChange: (() -> Void)?
     // Keep hidden ports saved before the command was renamed to topp.
     private let defaults = UserDefaults(suiteName: "org.4rji.puertosmac")!
-    init() { hidden = Set(defaults.stringArray(forKey: "hiddenPorts") ?? []) }
+    init() {
+        hidden = Set(defaults.stringArray(forKey: "hiddenPorts") ?? [])
+        let saved = defaults.double(forKey: "fontSize")
+        fontSize = Self.fontSizes.contains(saved) ? saved : Self.defaultFontSize
+    }
+
+    func zoom(by step: Double) {
+        fontSize = min(max(fontSize + step, Self.fontSizes.lowerBound), Self.fontSizes.upperBound)
+    }
+
+    // Port numbers never change, so keeping that order live does not move rows
+    // under the pointer. Other columns keep their order and append new rows.
+    private var sortsByPort: Bool { sortOrder.first?.keyPath == \PortRow.id.port.number }
 
     var visible: [PortRow] { rows.filter { !hidden.contains($0.id.port.label) } }
 
@@ -268,7 +285,8 @@ final class Monitor: ObservableObject {
             row.markChanges(since: old)
             return row
         }
-        rows = existing + sortedForTable(Array(additions.values))
+        let combined = existing + Array(additions.values)
+        rows = sortsByPort ? sortedForTable(combined) : existing + sortedForTable(Array(additions.values))
         if !selection.isSubset(of: sample.keys) { selection.formIntersection(sample.keys) }
     }
 
@@ -461,6 +479,11 @@ private struct ProcessInfoButton: NSViewRepresentable {
 
 struct PortWindow: View {
     @ObservedObject var monitor: Monitor
+    static let size = NSSize(width: 920, height: 520)
+    // Total width of the Port, Protocol, PID, Inbound, and Outbound columns,
+    // which grow with the text. Process and State absorb the remaining width.
+    static let scaledColumnsWidth: CGFloat = 65 * 3 + 89 * 2
+    private var scale: CGFloat { monitor.fontSize / Monitor.defaultFontSize }
 
     private var matches: [PortRow] {
         let text = monitor.query.trimmingCharacters(in: .whitespaces)
@@ -503,22 +526,24 @@ struct PortWindow: View {
             }.padding(12)
             Divider()
             Table(matches, selection: $monitor.selection, sortOrder: $monitor.sortOrder) {
-                TableColumn("Port", value: \.id.port.number) { Text(String($0.id.port.number)).monospacedDigit() }.width(65)
-                TableColumn("Protocol") { Text($0.id.port.transport) }.width(65)
+                TableColumn("Port", value: \.id.port.number) { Text(String($0.id.port.number)).monospacedDigit() }.width(65 * scale)
+                TableColumn("Protocol") { Text($0.id.port.transport) }.width(65 * scale)
                 TableColumn("Process", value: \.process) { row in
                     HStack(spacing: 4) {
                         Image(nsImage: ProcessArtwork.forRow(row).icon)
-                            .resizable().scaledToFit().frame(width: 18, height: 18).accessibilityHidden(true)
+                            .resizable().scaledToFit().frame(width: 18 * scale, height: 18 * scale).accessibilityHidden(true)
                         cell(row.process, changed: row.changed.contains(.process)).lineLimit(1).help(row.process)
                         Spacer(minLength: 0)
                         ProcessInfoButton(row: row).frame(width: 20, height: 20)
                     }
                 }.width(min: 145, ideal: 200)
-                TableColumn("PID") { Text(String($0.id.pid)).monospacedDigit() }.width(65)
+                TableColumn("PID") { Text(String($0.id.pid)).monospacedDigit() }.width(65 * scale)
                 TableColumn("State", value: \.state) { cell($0.state, changed: $0.changed.contains(.state)) }.width(min: 95, ideal: 140)
-                TableColumn("↓ Inbound") { cell($0.rxText, changed: $0.changed.contains(.rx)).monospacedDigit() }.width(89)
-                TableColumn("↑ Outbound") { cell($0.txText, changed: $0.changed.contains(.tx)).monospacedDigit() }.width(89)
+                TableColumn("↓ Inbound") { cell($0.rxText, changed: $0.changed.contains(.rx)).monospacedDigit() }.width(89 * scale)
+                TableColumn("↑ Outbound") { cell($0.txText, changed: $0.changed.contains(.tx)).monospacedDigit() }.width(89 * scale)
             }
+            // Rebuild the table so row heights and column widths follow the new size.
+            .id(monitor.fontSize)
             Divider()
             HStack {
                 let portCount = Set(matches.map { $0.id.port }).count
@@ -526,8 +551,10 @@ struct PortWindow: View {
                 Text("\(portCount) \(portCount == 1 ? "port" : "ports") · \(processCount) \(processCount == 1 ? "process" : "processes")")
                 Spacer()
                 Text(monitor.status).lineLimit(2)
-            }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 7)
-        }.frame(minWidth: 800, minHeight: 320)
+            }.font(.system(size: monitor.fontSize - 3)).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 7)
+        }
+        .font(.system(size: monitor.fontSize))
+        .frame(minWidth: 800, minHeight: 320)
     }
 }
 
@@ -553,6 +580,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             edit.addItem(withTitle: label, action: NSSelectorFromString(action), keyEquivalent: key)
         }
         main.addItem(withTitle: edit.title, action: nil, keyEquivalent: "").submenu = edit
+        let view = NSMenu(title: "View")
+        add("Zoom In", to: view, action: #selector(zoomIn), key: "+")
+        // ⌘= is the same key as ⌘+ without Shift.
+        add("Zoom In", to: view, action: #selector(zoomIn), key: "=")
+        view.items.last?.isHidden = true
+        view.items.last?.allowsKeyEquivalentWhenHidden = true
+        add("Zoom Out", to: view, action: #selector(zoomOut), key: "-")
+        add("Actual Size", to: view, action: #selector(actualSize), key: "0")
+        main.addItem(withTitle: view.title, action: nil, keyEquivalent: "").submenu = view
         let windows = NSMenu(title: "Window")
         windows.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         main.addItem(withTitle: windows.title, action: nil, keyEquivalent: "").submenu = windows
@@ -595,16 +631,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func openWindow() {
         if window == nil {
-            let w = NSWindow(contentRect: NSMakeRect(0, 0, 920, 520),
+            let w = NSWindow(contentRect: NSRect(origin: .zero, size: PortWindow.size),
                              styleMask: [.titled, .resizable, .closable, .miniaturizable],
                              backing: .buffered, defer: false)
             w.title = "topp · Network Ports"
             w.contentView = NSHostingView(rootView: PortWindow(monitor: monitor))
-            w.setContentSize(NSSize(width: 920, height: 520))
+            w.setContentSize(PortWindow.size)
             w.contentMinSize = NSSize(width: 800, height: 320)
             w.isReleasedWhenClosed = false
             w.center()
             window = w
+            fitWindowToText(animate: false)
         }
         if window?.isMiniaturized == true { window?.deminiaturize(nil) }
         NSApp.activate(ignoringOtherApps: true)
@@ -680,6 +717,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         button.toolTip = hint + "\nClick to open · Right-click for traffic"
         button.setAccessibilityLabel("topp · " + hint)
         if trackingMenu { updateSummary() }
+    }
+
+    @objc func zoomIn() {
+        monitor.zoom(by: 1)
+        fitWindowToText(animate: true)
+    }
+    @objc func zoomOut() { monitor.zoom(by: -1) }
+    @objc func actualSize() { monitor.fontSize = Monitor.defaultFontSize }
+
+    // Widen the window, never narrow it, so larger text keeps every column visible.
+    private func fitWindowToText(animate: Bool) {
+        guard let window, let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+        let scale = monitor.fontSize / Monitor.defaultFontSize
+        let needed = PortWindow.size.width + PortWindow.scaledColumnsWidth * (scale - 1)
+        var frame = window.frame
+        guard frame.width < needed else { return }
+        frame.size.width = min(needed, visible.width)
+        frame.origin.x = max(visible.minX, min(frame.minX, visible.maxX - frame.width))
+        window.setFrame(frame, display: true, animate: animate)
     }
 
     @objc func quit() { NSApp.terminate(nil) }
