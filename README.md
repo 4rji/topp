@@ -22,15 +22,25 @@
 - **Process details.** Executable path, user, parent PID, start time, and application info are one click away.
 - **Searchable session history.** Look up a peer after its socket disappears and review findings with the process, timestamp, and evidence.
 - **Single file, no dependencies.** One universal executable for Apple Silicon and Intel.
-- **Least privilege.** Only the traffic collector, built on Apple's `nettop`, runs with `sudo`. The interface runs as your user.
+- **Least privilege.** Only the traffic collector, built on Apple's `nettop`, runs with administrator privileges. The interface runs as your user.
 
 ## Quick install
 
-The repository includes a ready-to-run universal executable for Apple Silicon (macOS 12 or later) and Intel (macOS 14 or later).
+**From Applications.** Build the menu bar app with Apple's Command Line Tools, then drag the resulting app into Applications:
+
+```sh
+sh tools/build-app.sh
+open -R build/topp.app
+```
+
+Double-click **topp** in Applications and approve the macOS administrator prompt. The traffic indicator appears beside the clock. Right-click it and choose **Open Window** to inspect activity. Closing that window keeps monitoring active. Choose **Quit topp** from the same menu to stop.
+
+**From Terminal.** Compile the standalone command for your Mac:
 
 ```sh
 git clone https://github.com/4rji/topp.git
 cd topp
+swiftc -O static/topp.swift -o topp
 ./topp
 ```
 
@@ -111,7 +121,7 @@ Click the speeds to collapse them into an icon. Click again to bring the speeds 
 
 ## How it works
 
-topp asks `sudo` to start a small loop that runs `/usr/bin/nettop` with a one-second pause between samples and streams its byte counters back to the unprivileged app. A flow needs two consecutive observations with valid counters to contribute a measured rate. Only fixed system commands run as root, and the collector stops when topp quits, because its output pipe closes.
+The app uses macOS authorization and the command-line version uses `sudo` to start the same collector. It runs `/usr/bin/nettop` with a one-second pause between samples and streams its byte counters back to the unprivileged interface. A flow needs two consecutive observations with valid counters to contribute a measured rate. Only fixed system commands run as root, and the collector stops when topp quits, because its output pipe closes.
 
 ## Build from source
 
@@ -123,7 +133,7 @@ swiftc -O static/topp.swift -o build/topp
 ./build/topp --help
 ```
 
-For deployment, copy the universal `topp` executable from the repository root to another supported Mac. The source, screenshots, and banner are only needed for development and documentation.
+The menu bar app build targets Apple Silicon (macOS 12 or later) and Intel (macOS 14 or later). The standalone build above targets the current Mac.
 
 Run `./tests/run.sh` to check the parser, traffic rates, findings, and connection history against sample data on macOS.
 

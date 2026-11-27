@@ -502,10 +502,8 @@ func rate(_ value: Double) -> String {
 
 private let endOfSample = "--topp-sample--"
 
-// sudo authenticates on the caller's terminal before it backgrounds the sampler.
-// Only fixed system commands run as root. A closed output pipe ends the loop,
-// including when the unprivileged GUI is killed. One-shot samples flush even on idle Macs.
-func startCollector() throws -> FileHandle {
+// A closed output pipe ends either collector. One-shot samples flush even on idle Macs.
+func startCollector(graphicalAuthorization: Bool) throws -> FileHandle {
     let script = """
     trap '' HUP
     exec 2>&1
@@ -514,10 +512,12 @@ func startCollector() throws -> FileHandle {
         /bin/sleep 1 || exit
     done
     """
+    if graphicalAuthorization { return try startAuthorizedCollector(script) }
     let pipe = Pipe()
     let pid = try spawn(["/usr/bin/sudo", "-b", "--", "/bin/sh", "-c", script],
                         output: pipe.fileHandleForWriting.fileDescriptor)
     try pipe.fileHandleForWriting.close()
+    // Wait for sudo's terminal authentication before detaching the CLI.
     var status: Int32 = 0
     var waited: pid_t
     repeat { waited = waitpid(pid, &status, 0) } while waited == -1 && errno == EINTR
@@ -525,6 +525,68 @@ func startCollector() throws -> FileHandle {
         throw LaunchError("sudo could not start the monitor. Run topp from Terminal using an administrator account.")
     }
     return pipe.fileHandleForReading
+}
+
+// Bind before prompting so the collector can connect immediately after authorization.
+// The private directory limits access to the login user. The relay drops privileges
+// before resolving the socket path, and losing the socket closes the sampler's pipe.
+private func startAuthorizedCollector(_ script: String, authorize: (String) throws -> Void = requestAuthorization) throws -> FileHandle {
+    func posixFailure() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    var template = Array("/private/tmp/topp.XXXXXXXX".utf8CString)
+    guard mkdtemp(&template) != nil else { throw posixFailure() }
+    let directory = String(cString: template)
+    let path = directory + "/stream"
+    defer { unlink(path); rmdir(directory) }
+
+    let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard listener >= 0 else { throw posixFailure() }
+    defer { close(listener) }
+    var address = sockaddr_un()
+    address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+    address.sun_family = sa_family_t(AF_UNIX)
+    withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: path.utf8) }
+    let bound = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    guard bound == 0, listen(listener, 1) == 0 else { throw posixFailure() }
+
+    // The only substitutions are the numeric login UID and mkdtemp's fixed-format path.
+    let command = """
+    ( (
+    \(script)
+    ) | /usr/bin/sudo -n -u '#\(getuid())' -- /usr/bin/nc -U '\(path)' ) </dev/null >/dev/null 2>&1 &
+    """
+    try authorize(command)
+
+    var pending = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+    var ready: Int32
+    repeat { ready = poll(&pending, 1, 5000) } while ready < 0 && errno == EINTR
+    guard ready > 0 else { throw LaunchError("The authorized collector did not connect.") }
+    let fd = accept(listener, nil, nil)
+    guard fd >= 0 else { throw posixFailure() }
+    return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+}
+
+private func requestAuthorization(_ command: String) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    process.arguments = ["-e", """
+        on run argv
+            do shell script (item 1 of argv) with prompt "topp needs administrator access to monitor system-wide network traffic." with administrator privileges
+        end run
+        """, command]
+    let errors = Pipe()
+    process.standardError = errors
+    process.standardOutput = FileHandle.nullDevice
+    try process.run()
+    let diagnostic = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        if diagnostic.contains("(-128)") { throw CancellationError() }
+        throw LaunchError(diagnostic.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
 }
 
 struct RotatingLogFile {
@@ -1037,7 +1099,7 @@ final class Monitor: ObservableObject {
                 sample = Snapshot()
                 lastTime = now
             }
-            let message = diagnostic.isEmpty ? "Monitoring stopped. Run topp again from Terminal." : diagnostic
+            let message = diagnostic.isEmpty ? "Monitoring stopped. Relaunch topp." : diagnostic
             do { try self.log.finish(at: Date()) }
             catch { DispatchQueue.main.async { self.logError = "Log write failed. " + error.localizedDescription } }
             DispatchQueue.main.async {
@@ -1924,22 +1986,32 @@ Usage: topp [-d | --log-path]
   --log-path     Print the path of the persistent JSON Lines event log.
 """
 let args = Array(CommandLine.arguments.dropFirst())
+let finderLaunch = args.isEmpty && Bundle.main.bundleIdentifier == "org.4rji.topp"
 do {
     if args == ["--help"] || args == ["-h"] { print(usage); exit(0) }
     if args == ["--log-path"] { print(SessionLog.fileURL.path); exit(0) }
     guard geteuid() != 0 else { throw LaunchError("Run topp as your regular user. It requests sudo when needed.") }
     if args == ["--menu-stream"], isatty(STDIN_FILENO) == 0 { runWindow(menuMode: true); exit(0) }
     guard args.isEmpty || args == ["-d"] else { throw LaunchError(usage) }
-    let input = try startCollector()
+    let input = try startCollector(graphicalAuthorization: finderLaunch)
     if args == ["-d"] {
         guard let path = Bundle.main.executableURL?.path else { throw LaunchError("Could not find the topp executable.") }
         _ = try spawn([path, "--menu-stream"], input: input.fileDescriptor, detached: true)
         print("topp is beside the clock. Click to toggle speeds and icon. Right-click for Open Window, traffic, and findings.")
     } else {
         guard dup2(input.fileDescriptor, STDIN_FILENO) >= 0 else { throw LaunchError("Could not open the nettop data stream.") }
-        runWindow(menuMode: false)
+        runWindow(menuMode: finderLaunch)
     }
+} catch is CancellationError {
+    exit(0)
 } catch {
+    if finderLaunch {
+        let alert = NSAlert()
+        alert.messageText = "Could not start topp"
+        alert.informativeText = error.localizedDescription
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
     FileHandle.standardError.write(Data(("topp: " + error.localizedDescription + "\n").utf8))
     exit(1)
 }
