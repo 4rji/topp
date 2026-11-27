@@ -5,8 +5,9 @@ cd "$(dirname "$0")/.."
 work=$(mktemp -d "${TMPDIR:-/tmp}/topp-app.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT
 app="$work/topp.app"
-mkdir -p "$app/Contents/MacOS" build
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" build
 cp packaging/Info.plist "$app/Contents/Info.plist"
+cp packaging/topp.icns "$app/Contents/Resources/topp.icns"
 for target in arm64-apple-macos12 x86_64-apple-macos14; do
     xcrun swiftc -O -module-cache-path "$work/cache" -target "$target" \
         static/topp.swift -o "$work/$target"

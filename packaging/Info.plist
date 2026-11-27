@@ -6,6 +6,8 @@
     <string>topp</string>
     <key>CFBundleIdentifier</key>
     <string>org.4rji.topp</string>
+    <key>CFBundleIconFile</key>
+    <string>topp.icns</string>
     <key>CFBundleName</key>
     <string>topp</string>
     <key>CFBundlePackageType</key>
