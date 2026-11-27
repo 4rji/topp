@@ -73,6 +73,10 @@ Open **Recent connections** to see the last 300 observed combinations of process
 
 Open **Findings** to review the last 200 signals from this session. Each one includes the process, PID, time, and the observation that triggered it.
 
+![Findings tab showing a sustained upload by Disk Flow and a new wildcard listener opened by Electron](findings.png)
+
+In the **Sustained upload** finding above, Disk Flow (PID 63153) sent traffic from local TCP port 59277 to `10.0.4.160:22`. All three consecutive samples exceeded the 5 MB/s threshold. Even the lowest measured about 38 MB/s. The **New wildcard listener** finding shows that Electron (PID 25892) started listening on `*:5514`.
+
 While you watch **Live ports** or **Recent connections**, an amber banner above the table counts new findings and shows the latest signal and process. Click it to open **Findings**. Opening the banner clears the search for review and restores your previous search when you leave, provided you have not entered a new one. The banner counts findings even during a port search and respects **Hide Apple-signed apps**. Reviewing the list in the active window clears the count for matching findings. The events remain in the history and log.
 
 Right-click a finding to reveal its recorded executable in Finder, copy its path or PID, copy the finding with its timestamp and evidence, or search recent connections for the process name. **Terminate Process…** asks for confirmation when the original process is still running under your account and topp can verify its identity.
